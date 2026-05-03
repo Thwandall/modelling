@@ -1,0 +1,14 @@
+{
+  "daily_total_stop_cents": -7500,
+  "disable_aggression": true,
+  "disable_recovery": true,
+  "max_asset_side": 120,
+  "max_asset_side_tte": null,
+  "min_meta_p": 0.0,
+  "min_ml_edge": 0.04,
+  "one_contract": true,
+  "policy": "candidate_v2",
+  "rolling_6h_asset_stop_cents": -1500,
+  "rolling_6h_total_stop_cents": -4000,
+  "toxic_gates": "validate_meta_filter.apply_toxic_gates"
+}
