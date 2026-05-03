@@ -24,6 +24,10 @@ or risk knobs change, create a new directory such as
 
 ## Policy Lineage
 
+For the full training history, model comparisons, rolling validation results,
+forward tests, risk-policy experiments, selected knobs, and known live gaps, see
+[`docs/research_ledger.md`](docs/research_ledger.md).
+
 The model bundle contains two trained LightGBM models:
 
 - **Base model**: predicts the probability that the Kalshi contract resolves
