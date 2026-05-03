@@ -30,6 +30,22 @@ Confirm:
 - thresholds include expected assets and TTE buckets
 - risk policy knobs are present and intentional
 
+For `candidate_trade_features_v1_52k`, the intentional risk knobs are:
+
+```json
+{
+  "min_meta_p": 0.8,
+  "min_ml_edge": 0.0,
+  "max_asset_side": 180,
+  "one_contract": true,
+  "disable_recovery": true,
+  "disable_aggression": true
+}
+```
+
+These knobs approximate the `+54,232c` rolling trade-feature meta/toxic policy
+with a static live policy that scored `+52,911c` historically.
+
 ## C++ Parity Validation
 
 Before live deployment:
@@ -68,4 +84,3 @@ change plus restart:
 export CRYPTO_ML_MODEL_DIR=/opt/kalshi/crypto-models/models/<previous_model_id>
 systemctl restart crypto-bot
 ```
-

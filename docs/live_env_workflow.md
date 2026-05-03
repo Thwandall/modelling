@@ -37,7 +37,7 @@ The path should point directly at the directory containing `base_model.txt`,
 Use an environment file instead of editing code:
 
 ```text
-CRYPTO_ML_MODEL_DIR=/opt/kalshi/crypto-models/models/candidate_trade_features_v1
+CRYPTO_ML_MODEL_DIR=/opt/kalshi/crypto-models/models/candidate_trade_features_v1_52k
 ```
 
 Then the service can load it with:
@@ -57,6 +57,12 @@ export CRYPTO_ML_MODEL_DIR=$HOME/kalshi-crypto-models/models/candidate_trade_fea
 ./crypto_bot
 ```
 
+For testing the 52k static policy locally:
+
+```bash
+export CRYPTO_ML_MODEL_DIR=$HOME/kalshi-crypto-models/models/candidate_trade_features_v1_52k
+./crypto_bot
+```
+
 Do not copy research report directories directly into production. Only deploy
 validated model bundles.
-

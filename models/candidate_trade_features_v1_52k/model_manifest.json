@@ -1,0 +1,55 @@
+{
+  "base_encoded_feature_count": 121,
+  "base_raw_feature_count": 112,
+  "candidate_v2_summary": {
+    "max_drawdown": -882.0,
+    "pnl_cents": 5497.0,
+    "pnl_per_trade": 6.014223194748359,
+    "trades": 914.0,
+    "win_rate": 0.9638949671772429
+  },
+  "candidate_v1_trade_feature_summary": {
+    "description": "Trade-feature base model plus rolling meta filter plus toxic gates, before the live-stable static knob approximation.",
+    "folds": 30,
+    "pnl_cents": 54232.0,
+    "pnl_per_trade": 4.267548001259049,
+    "trades": 12708.0,
+    "win_rate": 0.9164305949008499,
+    "worst_fold_pnl_cents": -3458.0
+  },
+  "candidate_52k_policy_summary": {
+    "description": "Static live approximation of the 54k rolling meta/toxic research policy: min_meta_p=0.8, min_ml_edge=0.0, max_asset_side=180.",
+    "all_fold_pnl_cents": 52911.0,
+    "all_fold_pnl_per_trade": 4.488928480529397,
+    "all_fold_trades": 11787.0,
+    "design_pnl_cents": 29289.0,
+    "design_trades": 6126.0,
+    "holdout_pnl_cents": 23622.0,
+    "holdout_trades": 5661.0,
+    "negative_folds": 2,
+    "worst_fold_pnl_cents": -3502.0
+  },
+  "created_utc": "2026-04-30T12:32:56.455070+00:00",
+  "files": {
+    "base_calibration.json": "f5497b36be96222bea08703a318eec7f8a57186ea1757322f3c45408d740b26a",
+    "base_model.txt": "582f0150b89e2c27b7f6b9edd1421d45022d1f85440a0a9b026d653537376638",
+    "categorical_schema.json": "09d64b7d78a8451f3862d0b9787d096b7ade621e7fddb1d271443267c5ef4034",
+    "feature_schema.json": "204dfce1a2a395155c73a2379d40525cb23b65accd9fae41527f201c2cc7c3d9",
+    "golden_predictions.csv": "77248acd0948fc98a997857b7612cdccada0ac60ec625f8fe06259d14124295a",
+    "golden_rows.csv": "3469ecc3081f7e33e17f7e0a59a65a09df15d07a0590109997b2d733c1b32618",
+    "meta_model.txt": "54d4a2dc6b886363bb6433e0262d495d85a3f413854940684373c61d0cbdaf81",
+    "risk_policy.json": "5ffd64513b8682cfa1c808f4d0235801153bff382375b06b7be96ff129a5a55c",
+    "threshold_health.csv": "df1d6eae462dc6a9366667e8ea9dd04ef4b481aa3300f75c782145cdd18b19f8",
+    "threshold_tuning_grid.csv": "7b1211f9f5382b6dcf63c8a231c95dcab955de66861dbed7fe76ad5e28beabb1",
+    "thresholds.json": "cbee94409592b7ea3f5f226c3280b88170bf9f5129c565e945fe31d065a42b95"
+  },
+  "input_path": "/root/crypto_data/ml_features_quality_ab_plus_trades.csv",
+  "input_sha256": "3552f7a68db21c1193e1a4c097c4236e6b1e032fe0b4188216a6346a051b7b2d",
+  "meta_encoded_feature_count": 94,
+  "meta_raw_feature_count": 85,
+  "schema_hash": "1fd48a8d4c25039e008df87e5739943904eb3bbb55ce7411a5dc8efab377130a",
+  "train_rows": 40449,
+  "tune_candidate_rows": 34370,
+  "tune_hours": 24,
+  "tune_rows": 159902
+}

@@ -27,6 +27,41 @@ CRYPTO_ML_MODEL_DIR=/opt/kalshi/crypto-models/models/candidate_trade_features_v1
   `min_ml_edge`, and `max_asset_side`.
 - `model_manifest.json`: provenance and hashes for the release.
 
+## Research Policy Versus Live Policy
+
+Do not confuse trained model files with the full research policy.
+
+The historical `+54,232c` trade-feature result came from a rolling research
+procedure:
+
+1. Train a base LightGBM on history before a trailing tune window.
+2. Calibrate base probabilities on the tune window.
+3. Select per-asset/TTE edge thresholds on the tune window.
+4. Generate candidate trades on tune and test windows.
+5. Train a meta LightGBM on tune-window candidate trades.
+6. Select a meta approval threshold on the tune window.
+7. Apply that fold-specific threshold to the next 6h test window.
+8. Apply hard toxic gates after meta approval.
+
+The live C++ bot does not currently retrain the base model, retrain the meta
+model, or tune a fresh fold-specific meta threshold every six hours. It loads
+static LightGBM text files and static risk knobs from `risk_policy.json`.
+
+The deployable `candidate_trade_features_v1_52k` bundle is therefore a static
+approximation of the rolling research policy:
+
+```json
+{
+  "min_meta_p": 0.8,
+  "min_ml_edge": 0.0,
+  "max_asset_side": 180
+}
+```
+
+This configuration corresponded to `+52,911c` in historical rolling validation.
+The raw rolling meta/toxic policy without the static cap/knob approximation was
+`+54,232c`.
+
 ## Feature Contract
 
 Feature names in `feature_schema.json` are the source of truth. The C++ bot
@@ -47,6 +82,18 @@ Fields that need extra care:
 - Freshness fields: `rti_join_lag_ms`, `tick_join_lag_ms`, and
   `trade_last_age_s` must be real values, not placeholders, if the model uses
   them.
+
+## Toxic Gates
+
+The `toxic_gates` field in `risk_policy.json` is descriptive. In the current
+C++ implementation, toxic behavior is hardcoded in the decision path. It blocks
+selected RTI/momentum patterns, mostly NO-side candidates where RTI is already
+above strike and 30s/60s RTI momentum is positive.
+
+These gates are not a trained adverse-selection model. They do not directly
+model fast YES-side nose dives, threshold cascades, spread blowouts, book
+depletion, or toxic taker-flow bursts. A future nose-dive model should be
+exported as its own artifact and documented separately.
 
 ## Golden Rows
 
@@ -71,4 +118,3 @@ directory for any change:
 - changed thresholds
 - changed risk knobs
 - changed toxic gates
-

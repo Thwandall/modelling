@@ -1,0 +1,184 @@
+{
+  "health": [
+    {
+      "asset": "",
+      "max_drawdown": -1571.0,
+      "pnl_cents": 149406.0,
+      "pnl_per_trade": 4.346988652894966,
+      "scope": "global",
+      "status": "enabled",
+      "trades": 34370.0,
+      "win_rate": 0.9725923770730288
+    },
+    {
+      "asset": "BTC",
+      "max_drawdown": -632.0,
+      "pnl_cents": 39527.0,
+      "pnl_per_trade": 4.19251166737378,
+      "scope": "asset",
+      "status": "enabled",
+      "trades": 9428.0,
+      "win_rate": 0.9689223589308443
+    },
+    {
+      "asset": "ETH",
+      "max_drawdown": -1421.0,
+      "pnl_cents": 50617.0,
+      "pnl_per_trade": 4.678096118299446,
+      "scope": "asset",
+      "status": "enabled",
+      "trades": 10820.0,
+      "win_rate": 0.9751386321626617
+    },
+    {
+      "asset": "SOL",
+      "max_drawdown": -1338.0,
+      "pnl_cents": 25944.0,
+      "pnl_per_trade": 4.072202166064982,
+      "scope": "asset",
+      "status": "enabled",
+      "trades": 6371.0,
+      "win_rate": 0.9963898916967509
+    },
+    {
+      "asset": "XRP",
+      "max_drawdown": -948.0,
+      "pnl_cents": 33318.0,
+      "pnl_per_trade": 4.298542123596955,
+      "scope": "asset",
+      "status": "enabled",
+      "trades": 7751.0,
+      "win_rate": 0.9539414269126564
+    }
+  ],
+  "source": "tune_bucket_thresholds_v2 plus tune-health filtering",
+  "thresholds": [
+    {
+      "asset": "BTC",
+      "min_edge": 0.01,
+      "tte_bucket": 0
+    },
+    {
+      "asset": "BTC",
+      "min_edge": 0.01,
+      "tte_bucket": 3
+    },
+    {
+      "asset": "BTC",
+      "min_edge": 0.0,
+      "tte_bucket": 5
+    },
+    {
+      "asset": "BTC",
+      "min_edge": 0.0,
+      "tte_bucket": 6
+    },
+    {
+      "asset": "BTC",
+      "min_edge": 0.005,
+      "tte_bucket": 7
+    },
+    {
+      "asset": "ETH",
+      "min_edge": 0.01,
+      "tte_bucket": 0
+    },
+    {
+      "asset": "ETH",
+      "min_edge": 0.05,
+      "tte_bucket": 1
+    },
+    {
+      "asset": "ETH",
+      "min_edge": 0.01,
+      "tte_bucket": 2
+    },
+    {
+      "asset": "ETH",
+      "min_edge": 0.01,
+      "tte_bucket": 3
+    },
+    {
+      "asset": "ETH",
+      "min_edge": 0.0,
+      "tte_bucket": 5
+    },
+    {
+      "asset": "ETH",
+      "min_edge": 0.0,
+      "tte_bucket": 6
+    },
+    {
+      "asset": "ETH",
+      "min_edge": 0.015,
+      "tte_bucket": 7
+    },
+    {
+      "asset": "SOL",
+      "min_edge": 0.0,
+      "tte_bucket": 0
+    },
+    {
+      "asset": "SOL",
+      "min_edge": 0.01,
+      "tte_bucket": 1
+    },
+    {
+      "asset": "SOL",
+      "min_edge": 0.08,
+      "tte_bucket": 2
+    },
+    {
+      "asset": "SOL",
+      "min_edge": 0.08,
+      "tte_bucket": 3
+    },
+    {
+      "asset": "SOL",
+      "min_edge": 0.0,
+      "tte_bucket": 5
+    },
+    {
+      "asset": "SOL",
+      "min_edge": 0.0,
+      "tte_bucket": 6
+    },
+    {
+      "asset": "SOL",
+      "min_edge": 0.0,
+      "tte_bucket": 7
+    },
+    {
+      "asset": "XRP",
+      "min_edge": 0.01,
+      "tte_bucket": 0
+    },
+    {
+      "asset": "XRP",
+      "min_edge": 0.0,
+      "tte_bucket": 1
+    },
+    {
+      "asset": "XRP",
+      "min_edge": 0.05,
+      "tte_bucket": 2
+    },
+    {
+      "asset": "XRP",
+      "min_edge": 0.05,
+      "tte_bucket": 3
+    },
+    {
+      "asset": "XRP",
+      "min_edge": 0.0,
+      "tte_bucket": 6
+    },
+    {
+      "asset": "XRP",
+      "min_edge": 0.0,
+      "tte_bucket": 7
+    }
+  ],
+  "tune_hours": 24,
+  "version": 1
+}
