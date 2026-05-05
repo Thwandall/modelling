@@ -268,3 +268,89 @@ trade only if base policy approves AND toxic_probability < threshold
 
 The toxic threshold must be selected on tuning folds and frozen before forward
 testing.
+
+## First Veto Training Run
+
+Training script:
+
+```bash
+/root/crypto_data/.venv/bin/python \
+  /root/crypto_data/kalshi-crypto-models/scripts/train_toxic_flow_veto.py \
+  --input /root/crypto_data/toxic_flow_dataset_all_approved.csv \
+  --out-dir /root/crypto_data/toxic_flow_veto_reports/toxic_or_v1 \
+  --label label_toxic
+```
+
+The split is chronological by candidate `wall_ns`:
+
+```text
+train: 532 rows, 2026-05-03 02:49:23 UTC -> 2026-05-04 07:55:39 UTC
+tune:  178 rows, 2026-05-04 07:55:39 UTC -> 2026-05-04 14:48:17 UTC
+test:  178 rows, 2026-05-04 14:48:23 UTC -> 2026-05-05 01:50:18 UTC
+```
+
+Label comparison:
+
+```text
+label_bad_markout_30s:
+  train AUC 0.8768, tune AUC 0.5589, test AUC 0.5472
+
+label_toxic:
+  train AUC 0.7807, tune AUC 0.5486, test AUC 0.5839
+
+label_loses_at_settlement:
+  train AUC 0.8781, tune AUC 0.4984, test AUC 0.5422
+
+label_failed_target_120s:
+  train AUC 0.9352, tune AUC 0.7074, test AUC 0.5000
+```
+
+The honest read: this is weak but directionally useful. It is not a strong model
+yet, and the train/test gap says the data is still small. The best first target
+is currently `label_toxic`, because it generalizes better than the narrower
+labels.
+
+For `label_toxic`, tune-derived veto thresholds produced this on the test split:
+
+```text
+threshold 0.3869:
+  kept 137 / 178 candidates
+  raw bad rate 40.4%
+  kept bad rate 34.3%
+  veto bad rate 61.0%
+  raw settlement PnL +6970mD
+  kept settlement PnL +10320mD
+  vetoed settlement PnL -3350mD
+
+threshold 0.3928:
+  kept 156 / 178 candidates
+  raw bad rate 40.4%
+  kept bad rate 36.5%
+  veto bad rate 68.2%
+  raw settlement PnL +6970mD
+  kept settlement PnL +9960mD
+  vetoed settlement PnL -2990mD
+```
+
+This should not be shipped as a live gate yet. The next step is to increase the
+dataset with all approved candidates from the next live run, then rerun this
+same script and check whether the high-risk bucket remains negative out of
+sample.
+
+Top features for `label_toxic` were mostly trade-flow and pressure features:
+
+```text
+base_trade_60s_yes_taker_vol
+base_trade_300s_yes_taker_vol
+base_trade_60s_yes_taker_share
+base_trade_900s_avg_size
+base_rti_abs_vs_strike_bps
+base_trade_60s_signal_side_pressure
+base_book_seq
+base_trade_300s_volume
+base_trade_900s_net_yes_pressure
+base_trade_30s_signal_side_vwap_edge
+```
+
+That is consistent with the hypothesis that the bad trades are flow/adverse
+selection problems rather than just ordinary settlement randomness.
