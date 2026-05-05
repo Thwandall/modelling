@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 import lightgbm as lgb
@@ -60,6 +61,10 @@ def parse_args() -> argparse.Namespace:
         default="0.50,0.60,0.70,0.75,0.80,0.85,0.90",
         help="Quantiles of tune-set toxic probability to test as veto cutoffs.",
     )
+    parser.add_argument(
+        "--include-feature-regex",
+        help="Optional regex; when set, only matching features are used, plus asset/side.",
+    )
     return parser.parse_args()
 
 
@@ -73,12 +78,21 @@ def is_leakage_column(col: str) -> bool:
     return False
 
 
-def make_features(df: pd.DataFrame, label: str, model_name: str) -> tuple[pd.DataFrame, list[str]]:
+def make_features(
+    df: pd.DataFrame,
+    label: str,
+    model_name: str,
+    include_feature_regex: str | None = None,
+) -> tuple[pd.DataFrame, list[str]]:
     feature_cols = [
         col
         for col in df.columns
         if col != label and not is_leakage_column(col)
     ]
+    if include_feature_regex:
+        pattern = re.compile(include_feature_regex)
+        keep_always = {"asset", "side", "level", "tte_s", "tte_bucket", "entry_price_mD"}
+        feature_cols = [col for col in feature_cols if col in keep_always or pattern.search(col)]
     x = df[feature_cols].copy()
     for col in CATEGORICAL_COLUMNS:
         if col in x.columns:
@@ -216,7 +230,7 @@ def main() -> int:
     df[args.label] = pd.to_numeric(df[args.label], errors="coerce").fillna(0).astype(int)
     train_df, tune_df, test_df = chronological_split(df, args.train_frac, args.tune_frac)
 
-    full_x, feature_cols = make_features(df, args.label, args.model)
+    full_x, feature_cols = make_features(df, args.label, args.model, args.include_feature_regex)
     x_train = full_x.loc[train_df.index]
     x_tune = full_x.loc[tune_df.index]
     x_test = full_x.loc[test_df.index]
@@ -265,6 +279,7 @@ def main() -> int:
             },
         },
         "params": model.get_params(),
+        "include_feature_regex": args.include_feature_regex,
         "best_iteration": getattr(model, "best_iteration_", None),
         "metrics": [
             score_frame("train", train_df, y_train, pred_train, args.label),

@@ -40,6 +40,27 @@ class Tick:
     book_seq: int
 
 
+@dataclass(frozen=True)
+class RtiPoint:
+    wall_ns: int
+    rti_cents: float
+    rti_vs_strike_bps: float
+    consolidated_bid_cents: float
+    consolidated_ask_cents: float
+    utilized_depth_lots: float
+    dynamic_cap_lots: float
+    eligible_venues: float
+
+
+@dataclass(frozen=True)
+class PublicTrade:
+    wall_ns: int
+    yes_price_mD: float
+    no_price_mD: float
+    qty: float
+    yes_taker: int
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-root", type=Path, default=Path("/root/crypto_data"))
@@ -162,6 +183,79 @@ def load_ticks(path: Path) -> tuple[list[Tick], list[int]]:
     return ticks, [t.wall_ns for t in ticks]
 
 
+def load_rti_points(path: Path) -> tuple[list[RtiPoint], list[int]]:
+    if not path.exists():
+        return [], []
+    points: list[RtiPoint] = []
+    with path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            wall_ns = to_int(row.get("wall_ns"))
+            if wall_ns <= 0:
+                continue
+            points.append(
+                RtiPoint(
+                    wall_ns=wall_ns,
+                    rti_cents=to_float(row.get("rti_cents")),
+                    rti_vs_strike_bps=to_float(row.get("rti_vs_strike_bps")),
+                    consolidated_bid_cents=to_float(row.get("consolidated_bid_cents")),
+                    consolidated_ask_cents=to_float(row.get("consolidated_ask_cents")),
+                    utilized_depth_lots=to_float(row.get("utilized_depth_lots")),
+                    dynamic_cap_lots=to_float(row.get("dynamic_cap_lots")),
+                    eligible_venues=to_float(row.get("eligible_venues")),
+                )
+            )
+    points.sort(key=lambda p: p.wall_ns)
+    return points, [p.wall_ns for p in points]
+
+
+def load_public_trades(path: Path) -> list[PublicTrade]:
+    trades: list[PublicTrade] = []
+    for row in load_json_lines(path):
+        wall_ns = to_int(row.get("recv_wall_ns") or row.get("wall_ns"))
+        if wall_ns <= 0:
+            continue
+        trades.append(
+            PublicTrade(
+                wall_ns=wall_ns,
+                yes_price_mD=to_float(row.get("yes_price_mD")),
+                no_price_mD=to_float(row.get("no_price_mD")),
+                qty=to_float(row.get("count_fp"), 0.0) / 100.0,
+                yes_taker=to_int(row.get("yes_taker")),
+            )
+        )
+    return trades
+
+
+def build_continuous_trade_index(
+    market_dirs: list[Path],
+) -> tuple[dict[str, list[PublicTrade]], dict[str, list[int]]]:
+    by_asset: dict[str, list[PublicTrade]] = defaultdict(list)
+    seen: set[tuple[str, int, float, float, float, int]] = set()
+    for market_dir in market_dirs:
+        asset = asset_from_ticker(market_dir.name)
+        if not asset:
+            continue
+        for trade in load_public_trades(market_dir / "public_trades.ndjson"):
+            key = (
+                asset,
+                trade.wall_ns,
+                trade.yes_price_mD,
+                trade.no_price_mD,
+                trade.qty,
+                trade.yes_taker,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            by_asset[asset].append(trade)
+    walls: dict[str, list[int]] = {}
+    for asset, trades in by_asset.items():
+        trades.sort(key=lambda t: t.wall_ns)
+        walls[asset] = [t.wall_ns for t in trades]
+    return by_asset, walls
+
+
 def tick_at_or_before(ticks: list[Tick], walls: list[int], wall_ns: int) -> Tick | None:
     idx = bisect.bisect_right(walls, wall_ns) - 1
     if idx < 0:
@@ -180,6 +274,19 @@ def ticks_between(ticks: list[Tick], walls: list[int], start_ns: int, end_ns: in
     start_idx = bisect.bisect_left(walls, start_ns)
     end_idx = bisect.bisect_right(walls, end_ns)
     return ticks[start_idx:end_idx]
+
+
+def rti_at_or_before(points: list[RtiPoint], walls: list[int], wall_ns: int) -> RtiPoint | None:
+    idx = bisect.bisect_right(walls, wall_ns) - 1
+    if idx < 0:
+        return None
+    return points[idx]
+
+
+def rti_between(points: list[RtiPoint], walls: list[int], start_ns: int, end_ns: int) -> list[RtiPoint]:
+    start_idx = bisect.bisect_left(walls, start_ns)
+    end_idx = bisect.bisect_right(walls, end_ns)
+    return points[start_idx:end_idx]
 
 
 def same_bid(tick: Tick | None, side: str) -> float:
@@ -302,6 +409,161 @@ def markout_stats(
     return worst, best
 
 
+def add_book_velocity_features(row: dict[str, Any], ticks: list[Tick], walls: list[int],
+                               wall_ns: int, side: str, signal_tick: Tick | None) -> None:
+    signal_bid = same_bid(signal_tick, side)
+    signal_ask = same_ask(signal_tick, side)
+    signal_opp_bid = opp_bid(signal_tick, side)
+    for sec in (1, 3, 5, 15):
+        prior = tick_at_or_before(ticks, walls, wall_ns - sec * NS_PER_S)
+        prior_bid = same_bid(prior, side)
+        prior_ask = same_ask(prior, side)
+        prior_opp = opp_bid(prior, side)
+        row[f"book_same_bid_change_{sec}s_mD"] = (
+            signal_bid - prior_bid
+            if not math.isnan(signal_bid) and not math.isnan(prior_bid)
+            else math.nan
+        )
+        row[f"book_same_ask_change_{sec}s_mD"] = (
+            signal_ask - prior_ask
+            if not math.isnan(signal_ask) and not math.isnan(prior_ask)
+            else math.nan
+        )
+        row[f"book_opp_bid_change_{sec}s_mD"] = (
+            signal_opp_bid - prior_opp
+            if not math.isnan(signal_opp_bid) and not math.isnan(prior_opp)
+            else math.nan
+        )
+        row[f"book_microprice_change_{sec}s"] = (
+            signal_tick.microprice_x1000 - prior.microprice_x1000
+            if signal_tick and prior
+            else math.nan
+        )
+        row[f"book_imbalance_change_{sec}s"] = (
+            signal_tick.imbalance_x10000 - prior.imbalance_x10000
+            if signal_tick and prior
+            else math.nan
+        )
+        row[f"book_spread_change_{sec}s_mD"] = (
+            signal_tick.spread_mD - prior.spread_mD
+            if signal_tick and prior
+            else math.nan
+        )
+        row[f"book_yes_bid_qty_change_{sec}s"] = (
+            signal_tick.yes_bid_qty - prior.yes_bid_qty
+            if signal_tick and prior
+            else math.nan
+        )
+        row[f"book_no_bid_qty_change_{sec}s"] = (
+            signal_tick.no_bid_qty - prior.no_bid_qty
+            if signal_tick and prior
+            else math.nan
+        )
+
+
+def add_rti_path_features(row: dict[str, Any], points: list[RtiPoint], walls: list[int],
+                          wall_ns: int) -> None:
+    current = rti_at_or_before(points, walls, wall_ns)
+    current_rti = current.rti_cents if current else math.nan
+    current_dist = current.rti_vs_strike_bps if current else math.nan
+    for sec in (1, 3, 5, 15, 30, 60):
+        prior = rti_at_or_before(points, walls, wall_ns - sec * NS_PER_S)
+        row[f"rti_path_change_{sec}s_cents"] = (
+            current_rti - prior.rti_cents
+            if prior and not math.isnan(current_rti) and not math.isnan(prior.rti_cents)
+            else math.nan
+        )
+        row[f"rti_dist_change_{sec}s_bps"] = (
+            current_dist - prior.rti_vs_strike_bps
+            if prior and not math.isnan(current_dist) and not math.isnan(prior.rti_vs_strike_bps)
+            else math.nan
+        )
+    pts60 = rti_between(points, walls, wall_ns - 60 * NS_PER_S, wall_ns)
+    rti_vals = [p.rti_cents for p in pts60 if not math.isnan(p.rti_cents)]
+    dist_vals = [p.rti_vs_strike_bps for p in pts60 if not math.isnan(p.rti_vs_strike_bps)]
+    if rti_vals and not math.isnan(current_rti):
+        row["rti_drawdown_from_60s_high_cents"] = current_rti - max(rti_vals)
+        row["rti_bounce_from_60s_low_cents"] = current_rti - min(rti_vals)
+        row["rti_range_60s_cents"] = max(rti_vals) - min(rti_vals)
+    else:
+        row["rti_drawdown_from_60s_high_cents"] = math.nan
+        row["rti_bounce_from_60s_low_cents"] = math.nan
+        row["rti_range_60s_cents"] = math.nan
+    if dist_vals and not math.isnan(current_dist):
+        row["rti_dist_drawdown_from_60s_high_bps"] = current_dist - max(dist_vals)
+        row["rti_dist_bounce_from_60s_low_bps"] = current_dist - min(dist_vals)
+    else:
+        row["rti_dist_drawdown_from_60s_high_bps"] = math.nan
+        row["rti_dist_bounce_from_60s_low_bps"] = math.nan
+
+
+def add_continuous_trade_features(
+    row: dict[str, Any],
+    trades: list[PublicTrade],
+    walls: list[int],
+    wall_ns: int,
+    side: str,
+    entry_mD: int,
+) -> None:
+    idx_now = bisect.bisect_left(walls, wall_ns)
+    prior = trades[idx_now - 1] if idx_now > 0 else None
+    if prior:
+        row["asset_trade_last_age_s"] = (wall_ns - prior.wall_ns) / NS_PER_S
+        row["asset_trade_last_yes_price"] = prior.yes_price_mD / 10.0
+        row["asset_trade_last_no_price"] = prior.no_price_mD / 10.0
+    else:
+        row["asset_trade_last_age_s"] = 1e9
+        row["asset_trade_last_yes_price"] = 0.0
+        row["asset_trade_last_no_price"] = 0.0
+    for sec in (30, 60, 300, 900):
+        start_idx = bisect.bisect_left(walls, wall_ns - sec * NS_PER_S)
+        window = trades[start_idx:idx_now]
+        count = len(window)
+        volume = sum(t.qty for t in window)
+        yes_taker_vol = sum(t.qty for t in window if t.yes_taker)
+        no_taker_vol = volume - yes_taker_vol
+        yes_notional = sum(t.qty * (t.yes_price_mD / 10.0) for t in window)
+        no_notional = sum(t.qty * (t.no_price_mD / 10.0) for t in window)
+        vwap_yes = yes_notional / volume if volume > 0 else 0.0
+        vwap_no = no_notional / volume if volume > 0 else 0.0
+        net_yes_pressure = yes_taker_vol - no_taker_vol
+        side_pressure = net_yes_pressure if side == "YES" else -net_yes_pressure
+        side_vwap = vwap_yes if side == "YES" else vwap_no
+        row[f"asset_trade_{sec}s_count"] = count
+        row[f"asset_trade_{sec}s_volume"] = volume
+        row[f"asset_trade_{sec}s_vwap_yes"] = vwap_yes
+        row[f"asset_trade_{sec}s_vwap_no"] = vwap_no
+        row[f"asset_trade_{sec}s_yes_taker_vol"] = yes_taker_vol
+        row[f"asset_trade_{sec}s_no_taker_vol"] = no_taker_vol
+        row[f"asset_trade_{sec}s_net_yes_pressure"] = net_yes_pressure
+        row[f"asset_trade_{sec}s_yes_taker_share"] = yes_taker_vol / volume if volume > 0 else 0.0
+        row[f"asset_trade_{sec}s_avg_size"] = volume / count if count else 0.0
+        row[f"asset_trade_{sec}s_signal_side_pressure"] = side_pressure
+        row[f"asset_trade_{sec}s_entry_vs_vwap"] = entry_mD / 10.0 - side_vwap if side_vwap > 0 else 0.0
+        row[f"asset_trade_{sec}s_signal_side_vwap_edge"] = side_vwap - entry_mD / 10.0 if side_vwap > 0 else 0.0
+        row[f"asset_trade_{sec}s_price_momentum"] = (
+            (window[-1].yes_price_mD - window[0].yes_price_mD) / 10.0
+            if count >= 2
+            else 0.0
+        )
+        row[f"asset_trade_{sec}s_large_count"] = sum(1 for t in window if t.qty >= 10.0)
+        row[f"asset_trade_{sec}s_large_volume"] = sum(t.qty for t in window if t.qty >= 10.0)
+    row["asset_trade_volume_burst_30s_vs_5m"] = (
+        row["asset_trade_30s_volume"] / row["asset_trade_300s_volume"]
+        if row["asset_trade_300s_volume"] > 0
+        else 0.0
+    )
+    row["asset_trade_count_burst_30s_vs_5m"] = (
+        row["asset_trade_30s_count"] / row["asset_trade_300s_count"]
+        if row["asset_trade_300s_count"] > 0
+        else 0.0
+    )
+    row["asset_trade_pressure_accel_30s_vs_5m"] = (
+        row["asset_trade_30s_signal_side_pressure"] -
+        row["asset_trade_300s_signal_side_pressure"] / 10.0
+    )
+
+
 def settlement_pnl_mD(side: str, entry_mD: int, result_yes: int | None) -> float:
     if result_yes is None:
         return math.nan
@@ -314,6 +576,8 @@ def build_rows_for_market(
     feature_names: list[str],
     args: argparse.Namespace,
     markout_seconds: list[int],
+    asset_trades: dict[str, list[PublicTrade]],
+    asset_trade_walls: dict[str, list[int]],
 ) -> tuple[list[dict[str, Any]], Counter]:
     stats: Counter = Counter()
     ticker = market_dir.name
@@ -325,6 +589,9 @@ def build_rows_for_market(
     ticks, tick_walls = load_ticks(market_dir / "ticks.csv")
     if not ticks:
         stats["missing_ticks"] += 1
+    rti_points, rti_walls = load_rti_points(market_dir / "rti_snapshots.csv")
+    if not rti_points:
+        stats["missing_rti_points"] += 1
     result_yes, has_outcome_file = load_outcome(market_dir)
     if result_yes is None:
         stats["missing_outcome"] += 1
@@ -410,6 +677,17 @@ def build_rows_for_market(
             row["fill_is_taker"] = to_int(fill.get("is_taker"))
             stats["matched_entry_fills"] += 1
 
+        add_book_velocity_features(row, ticks, tick_walls, wall_ns, side, signal_tick)
+        add_rti_path_features(row, rti_points, rti_walls, wall_ns)
+        add_continuous_trade_features(
+            row,
+            asset_trades.get(asset, []),
+            asset_trade_walls.get(asset, []),
+            wall_ns,
+            side,
+            entry_mD,
+        )
+
         for sec in markout_seconds:
             future_tick = tick_at_or_after(ticks, tick_walls, wall_ns + sec * NS_PER_S)
             future_bid = same_bid(future_tick, side)
@@ -480,12 +758,20 @@ def main() -> int:
     market_dirs = sorted(p for p in market_dirs if p.is_dir())
     if args.max_markets:
         market_dirs = market_dirs[: args.max_markets]
+    asset_trades, asset_trade_walls = build_continuous_trade_index(market_dirs)
 
     all_rows: list[dict[str, Any]] = []
     stats: Counter = Counter()
     by_asset: Counter = Counter()
     for idx, market_dir in enumerate(market_dirs, 1):
-        rows, market_stats = build_rows_for_market(market_dir, feature_names, args, markout_seconds)
+        rows, market_stats = build_rows_for_market(
+            market_dir,
+            feature_names,
+            args,
+            markout_seconds,
+            asset_trades,
+            asset_trade_walls,
+        )
         all_rows.extend(rows)
         stats.update(market_stats)
         if rows:
