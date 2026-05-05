@@ -10,6 +10,7 @@ from pathlib import Path
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
+import xgboost as xgb
 from sklearn.metrics import average_precision_score, roc_auc_score
 
 
@@ -44,6 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--label", default=LABEL_DEFAULT)
+    parser.add_argument("--model", choices=("lightgbm", "xgboost"), default="lightgbm")
     parser.add_argument("--train-frac", type=float, default=0.60)
     parser.add_argument("--tune-frac", type=float, default=0.20)
     parser.add_argument("--random-state", type=int, default=7)
@@ -71,7 +73,7 @@ def is_leakage_column(col: str) -> bool:
     return False
 
 
-def make_features(df: pd.DataFrame, label: str) -> tuple[pd.DataFrame, list[str]]:
+def make_features(df: pd.DataFrame, label: str, model_name: str) -> tuple[pd.DataFrame, list[str]]:
     feature_cols = [
         col
         for col in df.columns
@@ -85,7 +87,46 @@ def make_features(df: pd.DataFrame, label: str) -> tuple[pd.DataFrame, list[str]
         if col in CATEGORICAL_COLUMNS:
             continue
         x[col] = pd.to_numeric(x[col], errors="coerce")
+    if model_name == "xgboost":
+        present_categoricals = [col for col in CATEGORICAL_COLUMNS if col in x.columns]
+        x = pd.get_dummies(x, columns=present_categoricals, dummy_na=True)
+        x = x.astype(float)
+        return x, list(x.columns)
     return x, feature_cols
+
+
+def build_model(args: argparse.Namespace):
+    if args.model == "lightgbm":
+        return lgb.LGBMClassifier(
+            objective="binary",
+            n_estimators=args.n_estimators,
+            learning_rate=args.learning_rate,
+            num_leaves=args.num_leaves,
+            min_child_samples=args.min_child_samples,
+            subsample=args.subsample,
+            colsample_bytree=args.colsample_bytree,
+            reg_alpha=0.1,
+            reg_lambda=1.0,
+            random_state=args.random_state,
+            n_jobs=4,
+            verbosity=-1,
+        )
+    return xgb.XGBClassifier(
+        objective="binary:logistic",
+        eval_metric="auc",
+        n_estimators=args.n_estimators,
+        learning_rate=args.learning_rate,
+        max_depth=max(2, int(np.ceil(np.log2(args.num_leaves)))),
+        min_child_weight=max(1, args.min_child_samples // 10),
+        subsample=args.subsample,
+        colsample_bytree=args.colsample_bytree,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
+        random_state=args.random_state,
+        n_jobs=4,
+        tree_method="hist",
+        verbosity=0,
+    )
 
 
 def chronological_split(
@@ -175,7 +216,7 @@ def main() -> int:
     df[args.label] = pd.to_numeric(df[args.label], errors="coerce").fillna(0).astype(int)
     train_df, tune_df, test_df = chronological_split(df, args.train_frac, args.tune_frac)
 
-    full_x, feature_cols = make_features(df, args.label)
+    full_x, feature_cols = make_features(df, args.label, args.model)
     x_train = full_x.loc[train_df.index]
     x_tune = full_x.loc[tune_df.index]
     x_test = full_x.loc[test_df.index]
@@ -183,22 +224,9 @@ def main() -> int:
     y_tune = tune_df[args.label]
     y_test = test_df[args.label]
 
-    model = lgb.LGBMClassifier(
-        objective="binary",
-        n_estimators=args.n_estimators,
-        learning_rate=args.learning_rate,
-        num_leaves=args.num_leaves,
-        min_child_samples=args.min_child_samples,
-        subsample=args.subsample,
-        colsample_bytree=args.colsample_bytree,
-        reg_alpha=0.1,
-        reg_lambda=1.0,
-        random_state=args.random_state,
-        n_jobs=4,
-        verbosity=-1,
-    )
+    model = build_model(args)
     eval_set = [(x_tune, y_tune)] if len(tune_df) and y_tune.nunique() > 1 else None
-    if eval_set:
+    if eval_set and args.model == "lightgbm":
         model.fit(
             x_train,
             y_train,
@@ -216,6 +244,7 @@ def main() -> int:
     summary = {
         "input": str(args.input),
         "label": args.label,
+        "model": args.model,
         "feature_count": len(feature_cols),
         "rows": int(len(df)),
         "splits": {
@@ -253,13 +282,25 @@ def main() -> int:
     veto_rows.extend(evaluate_vetoes("test", test_df, y_test, pred_test, thresholds))
     pd.DataFrame(veto_rows).to_csv(args.out_dir / "veto_threshold_report.csv", index=False)
 
-    importances = pd.DataFrame(
-        {
-            "feature": feature_cols,
-            "gain": model.booster_.feature_importance(importance_type="gain"),
-            "split": model.booster_.feature_importance(importance_type="split"),
-        }
-    ).sort_values(["gain", "split"], ascending=False)
+    if args.model == "lightgbm":
+        importances = pd.DataFrame(
+            {
+                "feature": feature_cols,
+                "gain": model.booster_.feature_importance(importance_type="gain"),
+                "split": model.booster_.feature_importance(importance_type="split"),
+            }
+        ).sort_values(["gain", "split"], ascending=False)
+    else:
+        booster = model.get_booster()
+        gain_scores = booster.get_score(importance_type="gain")
+        weight_scores = booster.get_score(importance_type="weight")
+        importances = pd.DataFrame(
+            {
+                "feature": feature_cols,
+                "gain": [gain_scores.get(f, 0.0) for f in feature_cols],
+                "split": [weight_scores.get(f, 0.0) for f in feature_cols],
+            }
+        ).sort_values(["gain", "split"], ascending=False)
     importances.to_csv(args.out_dir / "feature_importance.csv", index=False)
 
     pred_rows = pd.concat(
@@ -278,9 +319,20 @@ def main() -> int:
     )
     pred_rows.to_csv(args.out_dir / "predictions.csv", index=False)
 
-    model.booster_.save_model(args.out_dir / "toxic_flow_lgbm.txt")
+    if args.model == "lightgbm":
+        model.booster_.save_model(args.out_dir / "toxic_flow_lgbm.txt")
+    else:
+        model.save_model(args.out_dir / "toxic_flow_xgboost.json")
     with (args.out_dir / "feature_columns.json").open("w", encoding="utf-8") as f:
-        json.dump({"features": feature_cols, "categorical": list(CATEGORICAL_COLUMNS)}, f, indent=2)
+        json.dump(
+            {
+                "features": feature_cols,
+                "categorical": [] if args.model == "xgboost" else list(CATEGORICAL_COLUMNS),
+                "model": args.model,
+            },
+            f,
+            indent=2,
+        )
     with (args.out_dir / "summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 

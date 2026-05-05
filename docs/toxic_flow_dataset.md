@@ -354,3 +354,57 @@ base_trade_30s_signal_side_vwap_edge
 
 That is consistent with the hypothesis that the bad trades are flow/adverse
 selection problems rather than just ordinary settlement randomness.
+
+## XGBoost Comparison
+
+The trainer supports both LightGBM and XGBoost:
+
+```bash
+/root/crypto_data/.venv/bin/python \
+  /root/crypto_data/kalshi-crypto-models/scripts/train_toxic_flow_veto.py \
+  --model xgboost \
+  --input /root/crypto_data/toxic_flow_dataset_all_approved.csv \
+  --out-dir /root/crypto_data/toxic_flow_veto_reports/toxic_or_xgboost_v1 \
+  --label label_toxic
+```
+
+On the same chronological split, default XGBoost was worse:
+
+```text
+LightGBM label_toxic:
+  train AUC 0.7807, tune AUC 0.5486, test AUC 0.5839
+
+XGBoost label_toxic:
+  train AUC 0.9977, tune AUC 0.5412, test AUC 0.5233
+```
+
+The XGBoost training score is nearly perfect while tune/test are weak, which is
+classic overfitting on a small dataset.
+
+A more regularized XGBoost run was also worse:
+
+```bash
+/root/crypto_data/.venv/bin/python \
+  /root/crypto_data/kalshi-crypto-models/scripts/train_toxic_flow_veto.py \
+  --model xgboost \
+  --input /root/crypto_data/toxic_flow_dataset_all_approved.csv \
+  --out-dir /root/crypto_data/toxic_flow_veto_reports/toxic_or_xgboost_regularized_v1 \
+  --label label_toxic \
+  --n-estimators 75 \
+  --learning-rate 0.03 \
+  --num-leaves 4 \
+  --min-child-samples 50 \
+  --subsample 0.70 \
+  --colsample-bytree 0.60
+```
+
+Result:
+
+```text
+XGBoost regularized label_toxic:
+  train AUC 0.8218, tune AUC 0.5138, test AUC 0.5003
+```
+
+Current conclusion: keep LightGBM as the baseline toxic-flow model. XGBoost is
+available for future comparisons, but on the current 888-row dataset it does not
+improve the veto and appears more fragile.
