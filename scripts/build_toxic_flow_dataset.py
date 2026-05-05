@@ -116,9 +116,12 @@ def to_int(value: Any, default: int = 0) -> int:
     if value is None or value == "":
         return default
     try:
-        return int(float(value))
+        return int(value)
     except (TypeError, ValueError):
-        return default
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return default
 
 
 def to_float(value: Any, default: float = math.nan) -> float:
