@@ -16,10 +16,8 @@ from sklearn.metrics import log_loss, roc_auc_score
 LABEL = "side_won"
 NEVER_FEATURE_COLUMNS = {
     "ticker",
-    "asset",
     "wall_ns",
     "wall_time_utc",
-    "side",
     "result_yes",
     "won",
     "side_won",
@@ -32,11 +30,10 @@ NEVER_FEATURE_COLUMNS = {
     "logged_bucket_threshold",
     "logged_trade",
     "reason",
-    "source",
-    "quality_tier",
     "_is_clean",
     "_reject_reasons",
 }
+DEFAULT_CATEGORICAL_COLUMNS = ("asset", "side", "source", "quality_tier")
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,8 +80,11 @@ def chronological_ticker_split(
 def make_feature_frame(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     feature_cols = [col for col in df.columns if col not in NEVER_FEATURE_COLUMNS]
     x = df[feature_cols].copy()
-    for col in x.columns:
+    categorical_cols = [col for col in DEFAULT_CATEGORICAL_COLUMNS if col in x.columns]
+    numeric_cols = [col for col in x.columns if col not in categorical_cols]
+    for col in numeric_cols:
         x[col] = pd.to_numeric(x[col], errors="coerce")
+    x = pd.get_dummies(x, columns=categorical_cols, dummy_na=True)
     keep = [col for col in x.columns if not x[col].isna().all()]
     x = x[keep]
     return x, keep
