@@ -29,6 +29,11 @@ NEVER_FEATURE_COLUMNS = {
     "ticker",
     "wall_ns",
     "result_yes",
+    "pnl_cents",
+    "ml_pnl_cents",
+    "meta_pnl_cents",
+    "knob_pnl_cents",
+    "knob_trade",
     "settlement_pnl_mD",
     "max_adverse_bid_change_30s_mD",
     "max_favorable_bid_change_30s_mD",
@@ -188,8 +193,12 @@ def evaluate_vetoes(
     thresholds: list[float],
 ) -> list[dict]:
     rows: list[dict] = []
-    pnl = pd.to_numeric(df.get("settlement_pnl_mD"), errors="coerce")
-    adverse = pd.to_numeric(df.get("max_adverse_bid_change_30s_mD"), errors="coerce")
+    pnl = pd.to_numeric(df["settlement_pnl_mD"], errors="coerce") if "settlement_pnl_mD" in df.columns else None
+    adverse = (
+        pd.to_numeric(df["max_adverse_bid_change_30s_mD"], errors="coerce")
+        if "max_adverse_bid_change_30s_mD" in df.columns
+        else None
+    )
     for threshold in thresholds:
         keep = pred < threshold
         veto = ~keep

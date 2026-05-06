@@ -7,18 +7,20 @@ import argparse
 import bisect
 import csv
 import glob
+import gzip
 import json
 import math
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 NS_PER_S = 1_000_000_000
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PublicTrade:
     wall_ns: int
     yes_price_c: int
@@ -32,6 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--data-root", type=Path, default=Path("/root/crypto_data"))
     parser.add_argument("--market-glob", default="KX*15M-*")
+    parser.add_argument("--backfill-trades-dir", type=Path, default=None)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--windows", default="30,60,300,900")
     parser.add_argument("--near-cents", type=int, default=2)
@@ -69,10 +72,9 @@ def to_float(value: Any, default: float = math.nan) -> float:
 BAD_JSON_LINES: Counter[str] = Counter()
 
 
-def load_json_lines(path: Path) -> list[dict[str, Any]]:
+def iter_json_lines(path: Path):
     if not path.exists():
-        return []
-    rows: list[dict[str, Any]] = []
+        return
     with path.open("r", encoding="utf-8") as f:
         for line_no, line in enumerate(f, 1):
             line = line.strip()
@@ -84,8 +86,11 @@ def load_json_lines(path: Path) -> list[dict[str, Any]]:
                 BAD_JSON_LINES[str(path)] += 1
                 continue
             if isinstance(row, dict):
-                rows.append(row)
-    return rows
+                yield row
+
+
+def load_json_lines(path: Path) -> list[dict[str, Any]]:
+    return list(iter_json_lines(path) or [])
 
 
 def load_json_doc(path: Path) -> dict[str, Any] | None:
@@ -106,11 +111,59 @@ def price_mD_to_cents(value: Any) -> int:
     return int(round(price / 10.0))
 
 
-def load_public_trades(path: Path) -> list[PublicTrade]:
+def price_dollars_to_cents(value: Any) -> int:
+    price = to_float(value)
+    if not math.isfinite(price):
+        return 0
+    return int(round(price * 100.0))
+
+
+def iso_time_to_ns(value: Any) -> int:
+    if value is None or value == "":
+        return 0
+    text = str(value)
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * NS_PER_S)
+
+
+def scan_input_requirements(input_path: Path, max_rows: int, lookback_ns: int) -> tuple[set[str], int, int]:
+    assets: set[str] = set()
+    min_wall_ns = 0
+    max_wall_ns = 0
+    rows = 0
+    with input_path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            wall_ns = to_int(row.get("wall_ns"))
+            if wall_ns <= 0:
+                continue
+            asset = str(row.get("asset") or asset_from_ticker(str(row.get("ticker", ""))))
+            if asset:
+                assets.add(asset)
+            min_wall_ns = wall_ns if min_wall_ns == 0 else min(min_wall_ns, wall_ns)
+            max_wall_ns = max(max_wall_ns, wall_ns)
+            rows += 1
+            if max_rows and rows >= max_rows:
+                break
+    if min_wall_ns > 0:
+        min_wall_ns = max(0, min_wall_ns - lookback_ns)
+    return assets, min_wall_ns, max_wall_ns
+
+
+def load_live_public_trades(path: Path, min_wall_ns: int, max_wall_ns: int) -> list[PublicTrade]:
     trades: list[PublicTrade] = []
-    for row in load_json_lines(path):
+    for row in iter_json_lines(path) or []:
         wall_ns = to_int(row.get("recv_wall_ns") or row.get("wall_ns"))
         if wall_ns <= 0:
+            continue
+        if min_wall_ns and wall_ns < min_wall_ns:
+            continue
+        if max_wall_ns and wall_ns > max_wall_ns:
             continue
         qty = to_float(row.get("count_fp"), 0.0) / 100.0
         if qty <= 0:
@@ -127,24 +180,78 @@ def load_public_trades(path: Path) -> list[PublicTrade]:
     return trades
 
 
-def build_trade_index(market_dirs: list[Path]) -> tuple[dict[str, list[PublicTrade]], dict[str, list[int]]]:
+def load_backfilled_public_trades(path: Path, min_wall_ns: int, max_wall_ns: int) -> list[PublicTrade]:
+    trades: list[PublicTrade] = []
+    for row in iter_json_lines(path) or []:
+        wall_ns = iso_time_to_ns(row.get("created_time"))
+        if wall_ns <= 0:
+            ts_ms = to_int(row.get("ts_ms") or row.get("created_time_ms") or row.get("created_ts_ms"))
+            wall_ns = ts_ms * 1_000_000 if ts_ms > 0 else 0
+        if wall_ns <= 0:
+            continue
+        if min_wall_ns and wall_ns < min_wall_ns:
+            continue
+        if max_wall_ns and wall_ns > max_wall_ns:
+            continue
+        qty = to_float(row.get("count_fp"), 0.0)
+        if qty <= 0:
+            continue
+        taker_side = str(row.get("taker_side", "")).lower()
+        trades.append(
+            PublicTrade(
+                wall_ns=wall_ns,
+                yes_price_c=price_dollars_to_cents(row.get("yes_price_dollars")),
+                no_price_c=price_dollars_to_cents(row.get("no_price_dollars")),
+                qty=qty,
+                yes_taker=1 if taker_side == "yes" else 0,
+            )
+        )
+    return trades
+
+
+def build_trade_index(
+    market_dirs: list[Path],
+    backfill_trades_dir: Path | None,
+    assets_needed: set[str],
+    min_wall_ns: int,
+    max_wall_ns: int,
+) -> tuple[dict[str, list[PublicTrade]], dict[str, list[int]], Counter[str]]:
     by_asset: dict[str, list[PublicTrade]] = defaultdict(list)
-    seen: set[tuple[str, int, int, int, float, int]] = set()
+    counts: Counter[str] = Counter()
     for market_dir in market_dirs:
         asset = asset_from_ticker(market_dir.name)
         if not asset:
             continue
-        for trade in load_public_trades(market_dir / "public_trades.ndjson"):
-            key = (asset, trade.wall_ns, trade.yes_price_c, trade.no_price_c, trade.qty, trade.yes_taker)
-            if key in seen:
-                continue
-            seen.add(key)
+        if assets_needed and asset not in assets_needed:
+            continue
+        live_path = market_dir / "public_trades.ndjson"
+        for trade in load_live_public_trades(live_path, min_wall_ns, max_wall_ns):
             by_asset[asset].append(trade)
+            counts["live_trade_rows"] += 1
+        if live_path.exists():
+            counts["live_trade_files"] += 1
+    if backfill_trades_dir and backfill_trades_dir.exists():
+        for path in sorted(backfill_trades_dir.glob("*.trades.ndjson")):
+            ticker = path.name.removesuffix(".trades.ndjson")
+            asset = asset_from_ticker(ticker)
+            if not asset:
+                continue
+            if assets_needed and asset not in assets_needed:
+                continue
+            file_rows = 0
+            for trade in load_backfilled_public_trades(path, min_wall_ns, max_wall_ns):
+                by_asset[asset].append(trade)
+                counts["backfill_trade_rows"] += 1
+                file_rows += 1
+            counts["backfill_trade_files"] += 1
+            counts["nonempty_backfill_trade_files"] += int(file_rows > 0)
     walls: dict[str, list[int]] = {}
     for asset, trades in by_asset.items():
         trades.sort(key=lambda t: t.wall_ns)
         walls[asset] = [t.wall_ns for t in trades]
-    return by_asset, walls
+    for asset, trades in by_asset.items():
+        counts[f"trade_rows_asset_{asset}"] = len(trades)
+    return by_asset, walls, counts
 
 
 def load_entry_snapshots(market_dir: Path) -> tuple[list[dict[str, Any]], list[int]]:
@@ -406,10 +513,36 @@ def new_feature_columns(windows: list[int]) -> list[str]:
 def main() -> int:
     args = parse_args()
     windows = [int(x) for x in args.windows.split(",") if x.strip()]
+    max_lookback_ns = max(windows, default=0) * NS_PER_S
+    assets_needed, min_trade_wall_ns, max_trade_wall_ns = scan_input_requirements(
+        args.input, args.max_rows, max_lookback_ns
+    )
     market_dirs = [Path(p) for p in glob.glob(str(args.data_root / args.market_glob))]
     market_dirs = sorted([p for p in market_dirs if p.is_dir()])
     print(f"loading trades from {len(market_dirs)} market dirs")
-    trades_by_asset, walls_by_asset = build_trade_index(market_dirs)
+    trades_by_asset, walls_by_asset, trade_counts = build_trade_index(
+        market_dirs,
+        args.backfill_trades_dir,
+        assets_needed,
+        min_trade_wall_ns,
+        max_trade_wall_ns,
+    )
+    print(
+        json.dumps(
+            {
+                "input_scan": {
+                    "assets": sorted(assets_needed),
+                    "min_trade_wall_ns": min_trade_wall_ns,
+                    "max_trade_wall_ns": max_trade_wall_ns,
+                    "lookback_s": max(windows, default=0),
+                    "max_rows": args.max_rows,
+                },
+                "trade_index": trade_counts,
+            },
+            indent=2,
+        ),
+        flush=True,
+    )
     snapshot_index = build_snapshot_index(market_dirs)
     counts: Counter[str] = Counter()
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -418,8 +551,10 @@ def main() -> int:
         reader = csv.DictReader(in_f)
         if not reader.fieldnames:
             raise SystemExit(f"missing CSV header: {args.input}")
-        fieldnames = list(reader.fieldnames) + extra_cols
-        with args.out.open("w", encoding="utf-8", newline="") as out_f:
+        fieldnames = list(reader.fieldnames)
+        fieldnames.extend([col for col in extra_cols if col not in fieldnames])
+        opener = gzip.open if args.out.suffix == ".gz" else open
+        with opener(args.out, "wt", encoding="utf-8", newline="") as out_f:
             writer = csv.DictWriter(out_f, fieldnames=fieldnames)
             writer.writeheader()
             for row in reader:

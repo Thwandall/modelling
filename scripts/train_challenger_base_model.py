@@ -38,6 +38,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tune-frac", type=float, default=0.15)
     parser.add_argument("--edge-thresholds", default="-0.02,0,0.01,0.02,0.03,0.04,0.05,0.075,0.10")
     parser.add_argument("--random-state", type=int, default=42)
+    parser.add_argument(
+        "--per-asset",
+        action="store_true",
+        help="Train separate model variants for each asset instead of one global model.",
+    )
+    parser.add_argument(
+        "--assets",
+        default="",
+        help="Optional comma-separated asset allowlist, e.g. BTC,ETH. Defaults to all assets in input.",
+    )
+    parser.add_argument(
+        "--read-chunksize",
+        type=int,
+        default=50000,
+        help="Rows per pandas chunk when filtering large per-asset inputs.",
+    )
+    parser.add_argument(
+        "--skip-predictions",
+        action="store_true",
+        help="Do not write full predictions.csv files. Useful on low-disk machines.",
+    )
     return parser.parse_args()
 
 
@@ -194,20 +215,21 @@ def train_variant(name: str, df: pd.DataFrame, parts, args: argparse.Namespace, 
             row.update(simulate(frame, preds[split], threshold))
             threshold_rows.append(row)
     pd.DataFrame(threshold_rows).to_csv(out_dir / "threshold_report.csv", index=False)
-    pred_rows = pd.concat(
-        [
-            train_df[["ticker", "asset", "wall_ns", "side", "level", "yes_ask", "no_ask", LABEL]].assign(
-                split="train", p_yes=preds["train"]
-            ),
-            tune_df[["ticker", "asset", "wall_ns", "side", "level", "yes_ask", "no_ask", LABEL]].assign(
-                split="tune", p_yes=preds["tune"]
-            ),
-            test_df[["ticker", "asset", "wall_ns", "side", "level", "yes_ask", "no_ask", LABEL]].assign(
-                split="test", p_yes=preds["test"]
-            ),
-        ]
-    )
-    pred_rows.to_csv(out_dir / "predictions.csv", index=False)
+    if not args.skip_predictions:
+        pred_rows = pd.concat(
+            [
+                train_df[["ticker", "asset", "wall_ns", "side", "level", "yes_ask", "no_ask", LABEL]].assign(
+                    split="train", p_yes=preds["train"]
+                ),
+                tune_df[["ticker", "asset", "wall_ns", "side", "level", "yes_ask", "no_ask", LABEL]].assign(
+                    split="tune", p_yes=preds["tune"]
+                ),
+                test_df[["ticker", "asset", "wall_ns", "side", "level", "yes_ask", "no_ask", LABEL]].assign(
+                    split="test", p_yes=preds["test"]
+                ),
+            ]
+        )
+        pred_rows.to_csv(out_dir / "predictions.csv", index=False)
     importances = pd.DataFrame(
         {
             "feature": list(train_x.columns),
@@ -222,20 +244,109 @@ def train_variant(name: str, df: pd.DataFrame, parts, args: argparse.Namespace, 
     return summary
 
 
-def main() -> int:
-    args = parse_args()
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    df = pd.read_csv(args.input, low_memory=False)
+def train_scope(scope_name: str, df: pd.DataFrame, args: argparse.Namespace) -> dict:
+    scope_out = args.out_dir / scope_name if scope_name else args.out_dir
+    scope_out.mkdir(parents=True, exist_ok=True)
+    parts = split_by_ticker_time(df, args.train_frac, args.tune_frac)
+    split_counts = {
+        name: {"rows": int(len(part)), "tickers": int(part["ticker"].nunique())}
+        for name, part in zip(("train", "tune", "test"), parts)
+    }
+    scoped_args = argparse.Namespace(**vars(args))
+    scoped_args.out_dir = scope_out
+    summaries = [
+        train_variant("base_only", df, parts, scoped_args, include_new=False),
+        train_variant("base_plus_level_flow", df, parts, scoped_args, include_new=True),
+    ]
+    result = {
+        "scope": scope_name or "global",
+        "rows": int(len(df)),
+        "tickers": int(df["ticker"].nunique()),
+        "split_counts": split_counts,
+        "summaries": summaries,
+    }
+    with (scope_out / "summary.json").open("w", encoding="utf-8") as f:
+        json.dump({"input": str(args.input), **result}, f, indent=2)
+    return result
+
+
+def requested_assets(args: argparse.Namespace) -> set[str] | None:
+    if not args.assets:
+        return None
+    return {asset.strip() for asset in args.assets.split(",") if asset.strip()}
+
+
+def discover_assets(path: Path, chunksize: int) -> list[str]:
+    if path.suffix == ".parquet":
+        return sorted(str(v) for v in pd.read_parquet(path, columns=["asset"])["asset"].dropna().unique())
+    assets: set[str] = set()
+    for chunk in pd.read_csv(path, usecols=["asset"], chunksize=chunksize):
+        assets.update(str(v) for v in chunk["asset"].dropna().unique())
+    return sorted(assets)
+
+
+def load_input(path: Path, asset_filter: set[str] | None, chunksize: int) -> pd.DataFrame:
+    if path.suffix == ".parquet":
+        if asset_filter:
+            return pd.read_parquet(path, filters=[("asset", "in", sorted(asset_filter))])
+        return pd.read_parquet(path)
+    if not asset_filter:
+        return pd.read_csv(path, low_memory=False)
+    parts = []
+    for chunk in pd.read_csv(path, chunksize=chunksize, low_memory=False):
+        part = chunk[chunk["asset"].isin(asset_filter)]
+        if not part.empty:
+            parts.append(part.copy())
+    if not parts:
+        return pd.DataFrame()
+    return pd.concat(parts, ignore_index=True)
+
+
+def downcast_numeric(df: pd.DataFrame) -> pd.DataFrame:
+    for col in df.columns:
+        if pd.api.types.is_float_dtype(df[col]):
+            df[col] = pd.to_numeric(df[col], downcast="float")
+        elif pd.api.types.is_integer_dtype(df[col]):
+            df[col] = pd.to_numeric(df[col], downcast="integer")
+    return df
+
+
+def clean_input(df: pd.DataFrame) -> pd.DataFrame:
     df = df[df[LABEL].isin([0, 1])].copy()
     df["wall_ns"] = pd.to_numeric(df["wall_ns"], errors="coerce")
     df = df[df["wall_ns"].notna()].sort_values(["wall_ns", "ticker"]).reset_index(drop=True)
-    parts = split_by_ticker_time(df, args.train_frac, args.tune_frac)
-    summaries = [
-        train_variant("base_only", df, parts, args, include_new=False),
-        train_variant("base_plus_level_flow", df, parts, args, include_new=True),
-    ]
+    return downcast_numeric(df)
+
+
+def main() -> int:
+    args = parse_args()
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    if args.per_asset:
+        wanted = requested_assets(args)
+        asset_names = sorted(wanted) if wanted else discover_assets(args.input, args.read_chunksize)
+        scopes = []
+        for asset in asset_names:
+            asset_df = clean_input(load_input(args.input, {asset}, args.read_chunksize))
+            if asset_df.empty:
+                print(f"skipping asset={asset}: no rows")
+                continue
+            tickers = asset_df["ticker"].nunique()
+            if tickers < 5:
+                print(f"skipping asset={asset}: only {tickers} tickers")
+                continue
+            scopes.append(train_scope(f"asset_{asset}", asset_df, args))
+        with (args.out_dir / "summary.json").open("w", encoding="utf-8") as f:
+            json.dump({"input": str(args.input), "per_asset": True, "scopes": scopes}, f, indent=2)
+        print(json.dumps(scopes, indent=2))
+        return 0
+
+    df = clean_input(load_input(args.input, requested_assets(args), args.read_chunksize))
+    if df.empty:
+        raise SystemExit("no rows to train")
+    scope = train_scope("", df, args)
+    summaries = scope["summaries"]
     with (args.out_dir / "summary.json").open("w", encoding="utf-8") as f:
-        json.dump({"input": str(args.input), "summaries": summaries}, f, indent=2)
+        json.dump({"input": str(args.input), **scope}, f, indent=2)
     print(json.dumps(summaries, indent=2))
     return 0
 

@@ -1,0 +1,78 @@
+{
+  "input": "/root/crypto_data/ml_features_quality_ab_plus_level_flow_backfilled.csv.gz",
+  "scope": "asset_XRP",
+  "rows": 38046,
+  "tickers": 248,
+  "split_counts": {
+    "train": {
+      "rows": 3549,
+      "tickers": 173
+    },
+    "tune": {
+      "rows": 970,
+      "tickers": 37
+    },
+    "test": {
+      "rows": 33527,
+      "tickers": 38
+    }
+  },
+  "summaries": [
+    {
+      "variant": "base_only",
+      "feature_count": 112,
+      "best_iteration": 239,
+      "metrics": {
+        "train": {
+          "rows": 3549.0,
+          "base_rate": 0.47309101155255,
+          "brier": 0.007020143944165979,
+          "logloss": 0.04223356003954142,
+          "auc": 0.9997098476620602
+        },
+        "tune": {
+          "rows": 970.0,
+          "base_rate": 0.5752577319587628,
+          "brier": 0.030354010674206615,
+          "logloss": 0.12760457888335966,
+          "auc": 0.9907305912238579
+        },
+        "test": {
+          "rows": 33527.0,
+          "base_rate": 0.5392668595460375,
+          "brier": 0.0661439879511388,
+          "logloss": 0.32167932055089427,
+          "auc": 0.914133636940701
+        }
+      }
+    },
+    {
+      "variant": "base_plus_level_flow",
+      "feature_count": 212,
+      "best_iteration": 216,
+      "metrics": {
+        "train": {
+          "rows": 3549.0,
+          "base_rate": 0.47309101155255,
+          "brier": 0.007062205349277857,
+          "logloss": 0.04371410820985553,
+          "auc": 0.999692011733493
+        },
+        "tune": {
+          "rows": 970.0,
+          "base_rate": 0.5752577319587628,
+          "brier": 0.03224833837699878,
+          "logloss": 0.133161081485699,
+          "auc": 0.9922269199986081
+        },
+        "test": {
+          "rows": 33527.0,
+          "base_rate": 0.5392668595460375,
+          "brier": 0.06398359540571057,
+          "logloss": 0.2711658844562323,
+          "auc": 0.9422063581953938
+        }
+      }
+    }
+  ]
+}

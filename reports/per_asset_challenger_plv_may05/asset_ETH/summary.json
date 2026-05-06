@@ -1,0 +1,78 @@
+{
+  "input": "/root/crypto_data/ml_features_quality_ab_plus_level_flow_backfilled.csv.gz",
+  "scope": "asset_ETH",
+  "rows": 49764,
+  "tickers": 741,
+  "split_counts": {
+    "train": {
+      "rows": 9809,
+      "tickers": 518
+    },
+    "tune": {
+      "rows": 2127,
+      "tickers": 111
+    },
+    "test": {
+      "rows": 37828,
+      "tickers": 112
+    }
+  },
+  "summaries": [
+    {
+      "variant": "base_only",
+      "feature_count": 112,
+      "best_iteration": 105,
+      "metrics": {
+        "train": {
+          "rows": 9809.0,
+          "base_rate": 0.48363747578754207,
+          "brier": 0.03411040206528998,
+          "logloss": 0.14820748310325918,
+          "auc": 0.9932752797111414
+        },
+        "tune": {
+          "rows": 2127.0,
+          "base_rate": 0.48189938881053124,
+          "brier": 0.07307764695388273,
+          "logloss": 0.27868680671349455,
+          "auc": 0.9312000354123323
+        },
+        "test": {
+          "rows": 37828.0,
+          "base_rate": 0.5519456487258115,
+          "brier": 0.047398823467569934,
+          "logloss": 0.21134495510060175,
+          "auc": 0.9954433527350859
+        }
+      }
+    },
+    {
+      "variant": "base_plus_level_flow",
+      "feature_count": 212,
+      "best_iteration": 104,
+      "metrics": {
+        "train": {
+          "rows": 9809.0,
+          "base_rate": 0.48363747578754207,
+          "brier": 0.03291838275872514,
+          "logloss": 0.1453060762761243,
+          "auc": 0.9938817713734936
+        },
+        "tune": {
+          "rows": 2127.0,
+          "base_rate": 0.48189938881053124,
+          "brier": 0.0731905044318269,
+          "logloss": 0.280350568651465,
+          "auc": 0.9293581514762516
+        },
+        "test": {
+          "rows": 37828.0,
+          "base_rate": 0.5519456487258115,
+          "brier": 0.04966267110580179,
+          "logloss": 0.217944811280262,
+          "auc": 0.9931150966641568
+        }
+      }
+    }
+  ]
+}

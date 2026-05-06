@@ -1,0 +1,78 @@
+{
+  "input": "/root/crypto_data/ml_features_quality_ab_plus_level_flow_backfilled.csv.gz",
+  "scope": "asset_BTC",
+  "rows": 78313,
+  "tickers": 737,
+  "split_counts": {
+    "train": {
+      "rows": 12728,
+      "tickers": 515
+    },
+    "tune": {
+      "rows": 2426,
+      "tickers": 110
+    },
+    "test": {
+      "rows": 63159,
+      "tickers": 112
+    }
+  },
+  "summaries": [
+    {
+      "variant": "base_only",
+      "feature_count": 112,
+      "best_iteration": 142,
+      "metrics": {
+        "train": {
+          "rows": 12728.0,
+          "base_rate": 0.5124921433060968,
+          "brier": 0.026248868760281967,
+          "logloss": 0.11169958146633664,
+          "auc": 0.9953137988272576
+        },
+        "tune": {
+          "rows": 2426.0,
+          "base_rate": 0.47073371805441055,
+          "brier": 0.060429547807570046,
+          "logloss": 0.24022185848986335,
+          "auc": 0.9478540954002106
+        },
+        "test": {
+          "rows": 63159.0,
+          "base_rate": 0.4865498187115059,
+          "brier": 0.011369884490206223,
+          "logloss": 0.07566180567244145,
+          "auc": 0.9976281388793221
+        }
+      }
+    },
+    {
+      "variant": "base_plus_level_flow",
+      "feature_count": 212,
+      "best_iteration": 152,
+      "metrics": {
+        "train": {
+          "rows": 12728.0,
+          "base_rate": 0.5124921433060968,
+          "brier": 0.022211981441515975,
+          "logloss": 0.09786911986757005,
+          "auc": 0.9967172750039747
+        },
+        "tune": {
+          "rows": 2426.0,
+          "base_rate": 0.47073371805441055,
+          "brier": 0.0585897295260033,
+          "logloss": 0.2348374796761881,
+          "auc": 0.9476433649224457
+        },
+        "test": {
+          "rows": 63159.0,
+          "base_rate": 0.4865498187115059,
+          "brier": 0.009982718944334395,
+          "logloss": 0.06478556945070554,
+          "auc": 0.9978359733276784
+        }
+      }
+    }
+  ]
+}
