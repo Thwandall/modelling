@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 import lightgbm as lgb
@@ -51,6 +52,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--subsample", type=float, default=0.85)
     parser.add_argument("--colsample-bytree", type=float, default=0.85)
     parser.add_argument("--min-edge-mD", default="-20,0,10,15,20,30,40,50,75,100")
+    parser.add_argument(
+        "--include-feature-regex",
+        help="Optional regex; when set, keep matching features plus core asset/side/level/tte/entry fields.",
+    )
     return parser.parse_args()
 
 
@@ -77,8 +82,12 @@ def chronological_ticker_split(
     )
 
 
-def make_feature_frame(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+def make_feature_frame(df: pd.DataFrame, include_feature_regex: str | None = None) -> tuple[pd.DataFrame, list[str]]:
     feature_cols = [col for col in df.columns if col not in NEVER_FEATURE_COLUMNS]
+    if include_feature_regex:
+        pattern = re.compile(include_feature_regex)
+        keep_always = {"asset", "side", "level", "tte_s", "tte_bucket", "entry_price_mD"}
+        feature_cols = [col for col in feature_cols if col in keep_always or pattern.search(col)]
     x = df[feature_cols].copy()
     categorical_cols = [col for col in DEFAULT_CATEGORICAL_COLUMNS if col in x.columns]
     numeric_cols = [col for col in x.columns if col not in categorical_cols]
@@ -215,7 +224,7 @@ def main() -> int:
     df = df[df["wall_ns"].notna() & df["entry_price_mD"].notna() & df["settlement_pnl_mD"].notna()].copy()
 
     train_df, tune_df, test_df = chronological_ticker_split(df, args.train_frac, args.tune_frac)
-    full_x, feature_cols = make_feature_frame(df)
+    full_x, feature_cols = make_feature_frame(df, args.include_feature_regex)
     x_train = full_x.loc[train_df.index]
     x_tune = full_x.loc[tune_df.index]
     x_test = full_x.loc[test_df.index]
@@ -296,6 +305,7 @@ def main() -> int:
             split_summary("test", test_df, pred_test),
         ],
         "params": model.get_params(),
+        "include_feature_regex": args.include_feature_regex,
     }
     with (args.out_dir / "summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
