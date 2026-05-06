@@ -751,7 +751,75 @@ src/ml/risk_policy.cpp
 - Entry logs include execution mode and profit-take settings.
 - Replay can compare both modes.
 
-## Chunk 11: Extend Risk Policy Support
+## Chunk 11: Preserve Research-Style Signal Independence
+
+Goal: make live execution match the research assumption that each recorded threshold-crossing candidate is an independent decision opportunity.
+
+Current live behavior:
+
+- Each side/level has one slot.
+- Once a crossing is evaluated, the crossing stores `ml_evaluated=true`.
+- A rejected crossing is usually not evaluated again later just because time-to-expiry changed.
+- An approved crossing can block the same side/level while its slot is active.
+- If profit-taking fully closes the slot, the code clears the crossing and allows re-cross/re-evaluation.
+
+Research behavior:
+
+- Research rows are recorded crossing events.
+- If the data has two crossing rows for the same side/level in one market, research can score both independently.
+- Research does not continuously re-score the same crossing every tick while price remains above the threshold.
+- Research PnL generally assumes each accepted candidate is independently tradable unless the simulator explicitly adds slot/position constraints.
+
+Required migration decision:
+
+- For clean research parity, live should not let an old position silently suppress later recorded crossing opportunities unless the research replay simulator applies the same rule.
+- The preferred v1 is to define a canonical signal policy and use it in both research replay and C++:
+
+```text
+one decision per recorded crossing event
+same side/level may trade again only after a true re-cross event
+slot blocking must be represented in research replay if enabled live
+```
+
+Implementation options:
+
+1. Strict independent-candidate mode:
+   - Every newly recorded crossing event gets one ML evaluation.
+   - Slot state does not suppress ML scoring.
+   - Risk/exposure may still suppress order submission.
+   - Use this when validating model quality.
+
+2. Slot-constrained execution mode:
+   - Keep current slot blocking.
+   - Research replay must simulate the same slot blocking before reporting PnL.
+   - Use this when validating deployable execution PnL.
+
+Default recommendation:
+
+```text
+model validation: strict independent-candidate mode
+live execution validation: slot-constrained replay and live mode must match
+```
+
+Required logging:
+
+- `crossing_event_id`
+- side
+- level
+- TTE
+- whether ML was evaluated
+- whether order was blocked by active slot
+- whether order was blocked by exposure/risk
+- prior active slot state
+
+### DoD
+
+- Migration doc and model contract state whether a bundle was validated with independent-candidate or slot-constrained semantics.
+- C++ logs every skipped candidate caused by active slot state.
+- Research replay can reproduce the selected live slot policy.
+- Reported PnL clearly separates model-candidate PnL from executable slot-constrained PnL.
+
+## Chunk 12: Extend Risk Policy Support
 
 Goal: express the deployable policy correctly in local C++.
 
@@ -781,7 +849,7 @@ Fields to warn/fail on if non-null and unsupported:
 - `max_asset_side` remains rolling, not lifetime.
 - Risk-policy startup log prints all active knobs.
 
-## Chunk 12: Golden Prediction And Replay Tests
+## Chunk 13: Golden Prediction And Replay Tests
 
 Goal: prove local C++ is running the same model/policy as research.
 
@@ -825,7 +893,7 @@ Replay test:
   - `asset_side_cap`
   - `exposure_cap`
 
-## Chunk 13: Deployment And Rollout
+## Chunk 14: Deployment And Rollout
 
 Goal: ship in a way that makes live results interpretable.
 
@@ -952,11 +1020,12 @@ Mitigation:
 5. Implement RTI dynamics live.
 6. Implement PLV live.
 7. Add configurable execution mode.
-8. Extend risk-policy parsing.
-9. Run local parity/golden/replay tests.
-10. Deploy one-contract hold-to-settlement probe.
-11. Compare live feature distributions and PnL.
-12. Only then test profit-taking and larger caps.
+8. Make signal independence/slot constraints explicit in both research replay and C++.
+9. Extend risk-policy parsing.
+10. Run local parity/golden/replay tests.
+11. Deploy one-contract hold-to-settlement probe.
+12. Compare live feature distributions and PnL.
+13. Only then test profit-taking and larger caps.
 
 ## Definition Of Done For The Whole Migration
 
@@ -968,7 +1037,7 @@ The migration is complete only when:
 - C++ PLV features match Python.
 - Golden prediction tests pass.
 - Execution mode is configurable.
+- Signal independence versus slot-constrained execution is explicit and replayable.
 - First live run uses one contract, no recovery, no aggression.
 - Logs are sufficient to diagnose every approved and skipped candidate.
 - Rollback to `candidate_trade_features_v1_52k` is available.
-
